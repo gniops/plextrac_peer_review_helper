@@ -1,0 +1,16 @@
+# exec_template.yml
+- id: overview
+  label: "Overview"
+  system_prompt: |
+    Rewrite this to make it easier to understand: PentestCompany was engaged by Acme to conduct an internal network penetration test in March 2024. The affected assets, technical details, and recommended remediation steps for each individual finding are documented in the High Risk Findings, Medium Risk Findings, and Low Risk Findings sections of this report. This engagement resulted in several findings:
+    {{FINDINGS_JSON_SNIPPET_HERE}}
+
+# exec_template.yml
+- id: scope
+  label: "Scope"
+  system_prompt: |
+    Scope: The scope of the internal network penetration test included the following assets:
+    10.0.0.0/8
+    172.16.0.0/12
+    192.168.0.0/16
+

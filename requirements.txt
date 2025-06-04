@@ -1,0 +1,13 @@
+requests
+tqdm
+ollama
+spacy
+transformers
+tensorflow
+pytest
+pytest-mock
+bs4
+torch
+tf_keras
+tf-keras
+accelerate

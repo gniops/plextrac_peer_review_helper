@@ -1,0 +1,5 @@
+more things the tool should be able to fix:
+
+-lots of inconsistencies where some people italic tech words and others use code blocks. no strong opinions but should be consistent throughout report.
+
+- make sure required tags are in all findings
