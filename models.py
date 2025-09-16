@@ -29,7 +29,7 @@ class LlamaModel:
         instruction: str,
         examples: str | list[str],
         temperature=0.1,
-        model_name: str = "llama3.1:8b-instruct-q8_0", # "llama3.2:3b-instruct-q3_K_L",
+        model_name: str = "llama3:8b-instruct-fp16", # "llama3.2:3b-instruct-q3_K_L",
         **kwargs,
     ) -> list[str]:
         responses = []
@@ -213,7 +213,7 @@ class CopyEditor:
         grammarly_batch_size = grammarly_kwargs.pop("batch_size", 8)
 
         default_llama_kwargs = {
-            "model_name": "llama3.1:8b-instruct-q8_0", #"llama3.2:3b-instruct-q3_K_L",
+            "model_name": "llama3:8b-instruct-fp16", #"llama3.2:3b-instruct-q3_K_L",
             "temperature": 0.3,
         }
 

@@ -12,7 +12,7 @@ import os
 import re
 import tempfile
 import subprocess
-import copy
+from copy import deepcopy
 import concurrent.futures
 import yaml
 
@@ -286,7 +286,13 @@ class PlexTracAPI:
         prompts = prompts or {
             "exec_summary": {
                 "grammarly": "Make this text coherent and fix any grammar issues:",
-                "llama": """Edit the text for grammar and typos only. Do not change meaning, structure, or content.
+                "llama": """You are a copy-editor. Improve clarity, flow, grammar, and professionalism while preserving meaning and any URLs/HTML tags.
+
+    OUTPUT RULES:
+    - Output ONLY the revised text.
+    - Do NOT add any explanations, headings, labels, or lead-ins (e.g., “Here is the edited text:”).
+    - Do NOT wrap the output in quotes or Markdown/code fences.
+    - Keep all HTML tags that are present in the input unless they are clearly broken.
 
     Use these Strict instructions:
     - Do not add, remove, or rewrite sentences.
@@ -302,7 +308,15 @@ class PlexTracAPI:
             },
             "finding_title": {
                 "grammarly": "Refine the following title for clarity and readability while preserving its original intent:",
-                "llama": """Perform the following text edits on this penetration testing report title:
+                "llama": """You are a copy-editor. Improve clarity, flow, grammar, and professionalism while preserving meaning and any URLs/HTML tags.
+    OUTPUT RULES:
+    - Output ONLY the revised text.
+    - Do NOT add any explanations, headings, labels, or lead-ins (e.g., “Here is the edited text:”).
+    - Do NOT wrap the output in quotes or Markdown/code fences.
+    - Keep all HTML tags that are present in the input unless they are clearly broken.
+
+    Use these Strict instructions:
+
     - Improve the finding title while keeping changes minimal.
     - Do not add words like "Vulnerability Assessment" or change the title format unnecessarily.
     - Do not introduce new terms or change their meaning.
@@ -311,7 +325,13 @@ class PlexTracAPI:
             },
             "finding_body": {
                 "grammarly": "Make this text coherent and fix any grammar issues:",
-                "llama": """Edit the text for grammar and typos only. Do not change meaning, structure, or content.
+                "llama": """You are a copy-editor. Improve clarity, flow, grammar, and professionalism while preserving meaning and any URLs/HTML tags.
+
+    OUTPUT RULES:
+    - Output ONLY the revised text.
+    - Do NOT add any explanations, headings, labels, or lead-ins (e.g., “Here is the edited text:”).
+    - Do NOT wrap the output in quotes or Markdown/code fences.
+    - Keep all HTML tags that are present in the input unless they are clearly broken.
 
     Use these Strict instructions:
     - Do not add, remove, or rewrite sentences.
@@ -346,7 +366,7 @@ class PlexTracAPI:
 
         # --- Helper to process a single finding ---
         def process_single_finding(finding):
-            modified_finding = copy.deepcopy(finding)
+            modified_finding = finding.copy()
 
             title_edits = self.copy_editor.get_edits(
                 finding.get("title", ""),
@@ -483,7 +503,7 @@ class PlexTracAPI:
             log_llm_interaction(
                 section=section['id'],
                 field_id=None,
-                model=", ".join(m for m, enabled in [("llama3.1:instruct-8b", use_llama), 
+                model=", ".join(m for m, enabled in [("llama3:8b-instruct-fp16", use_llama), 
                                                      ("grammarly/coedit-xl", use_grammarly)] if enabled),
                 prompt=prompt,
                 response=generated_text
@@ -506,10 +526,8 @@ class PlexTracAPI:
     @authentication_required_decorator
     def update_executive_summary(self, field_id, updated_text):
         """
-        Update a specific executive summary field in PlexTrac and sync local copy.
-
-        :param field_id: The ID of the executive summary field to update.
-        :param updated_text: The new text to update for this field.
+        Update a specific executive summary field in PlexTrac and, on success,
+        log *all* exec summary fields (original+modified) so the audit log is complete.
         """
         client_id = self.client_id
         report_id = self.report_id
@@ -518,50 +536,70 @@ class PlexTracAPI:
             print("Error: Client ID or Report ID is missing.")
             return False
 
-        # Ensure full report data is present
         if not self.report_content:
             print("Error: Full report content is missing. Fetch it before updating.")
             return False
 
-        # Get the existing executive summary custom fields
         existing_custom_fields = self.report_content.get("exec_summary", {}).get("custom_fields", [])
+        if not isinstance(existing_custom_fields, list):
+            print("Error: exec_summary.custom_fields is missing or not a list.")
+            return False
 
-        # Modify only the matching field and update the local copy
-        modified_custom_fields = []
+        # ----- 1) Precompute originals + would-be updates (no mutation yet) -----
+        audit_entries = []            # list of dicts to feed log_change() after success
+        modified_custom_fields = []   # list for self.report_content mutation
         field_updated = False
+        target_id_str = str(field_id)
 
-        for field in existing_custom_fields:
-            if str(field.get("id")) == str(field_id):  # Match by ID
-                modified_field = field.copy()  # Copy all existing fields
-                modified_field["text"] = updated_text  # Update only the text
+        for f in existing_custom_fields:
+            fid = str(f.get("id"))
+            original_text = f.get("text", "")
+
+            if fid == target_id_str:
+                # This is the one we are updating
+                new_text = updated_text
                 field_updated = True
+
+                mf = f.copy()
+                mf["text"] = updated_text
+                modified_custom_fields.append(mf)
+                audit_entries.append({
+                    "section": "executive_summary",
+                    "field_id": fid,
+                    "original": original_text,
+                    "modified": new_text,
+                    "accepted": True,
+                })
             else:
-                modified_field = field  # Keep other fields unchanged
+                # Not touched
+                new_text = original_text
+                modified_custom_fields.append(f)
 
-            modified_custom_fields.append(modified_field)
-
-        # If the field was not found, return an error
         if not field_updated:
             print(f"Error: No executive summary field found with ID {field_id}.")
             return False
 
-        # Update our local copy
+        # ----- 2) Mutate local copy that we'll send to the server -----
         self.report_content["exec_summary"]["custom_fields"] = modified_custom_fields
-
-        # Prepare the updated full report payload
         updated_report = self.report_content.copy()
 
-        # API Request
+        # ----- 3) PUT update first -----
         url = f"{self.base_url}/client/{client_id}/report/{report_id}"
-        headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
 
         try:
-            log_change("executive_summary", field_id, field["text"], updated_text, accepted=True)
             response = self.make_request_authenticated("PUT", url, headers=headers, json=updated_report)
+
+            # ----- 4) Only log after a successful update -----
             if response.status_code == 200:
+                for e in audit_entries:
+                    log_change(
+                        e["section"],
+                        e["field_id"],
+                        e["original"],
+                        e["modified"],
+                        e["accepted"]
+                    )
                 print(f"Executive summary field {field_id} updated successfully.")
                 time.sleep(3)
                 return True
@@ -569,6 +607,7 @@ class PlexTracAPI:
                 print(f"Error updating field {field_id}: {response.status_code}, {response.text}")
                 time.sleep(3)
                 return False
+
         except requests.RequestException as e:
             print(f"Request failed: {e}")
             time.sleep(3)
@@ -576,14 +615,18 @@ class PlexTracAPI:
 
 
     @authentication_required_decorator
-    def update_finding(self, finding_id, updated_title=None, updated_description=None, updated_recommendations=None, updated_guidance=None, updated_reproduction_steps=None):
+    def update_finding(
+        self,
+        finding_id,
+        updated_title=None,
+        updated_description=None,
+        updated_recommendations=None,
+        updated_guidance=None,
+        updated_reproduction_steps=None,
+    ):
         """
-        Update a specific finding in PlexTrac and sync the local copy.
-
-        :param finding_id: The ID of the finding to update.
-        :param updated_title: (Optional) The new title of the finding.
-        :param updated_description: (Optional) The new description of the finding.
-        :param updated_recommendations: (Optional) The new recommendations for the finding.
+        Update a specific finding in PlexTrac and, on success, log only the fields
+        the user actually accepted (i.e., the ones passed in and changed).
         """
         client_id = self.client_id
         report_id = self.report_id
@@ -593,84 +636,99 @@ class PlexTracAPI:
             time.sleep(3)
             return False
 
-        # Ensure full report findings data is present
-        if not self.report_findings_content:
-            print("Error: Findings content is missing. Fetch it before updating.")
-            time.sleep(3)
-            return False
+        findings = self.report_findings_content or []
+        # ---- find target finding ----
+        target = None
+        for f in findings:
+            if str(f.get("id")) == str(finding_id):
+                target = f
+                break
 
-        # Modify only the matching finding and update the local copy
-        modified_findings = []
-        is_finding_changed = False
-        updated_finding=None # The finding object that will be sent to plextrac
-    
-        for finding in self.report_findings_content:
-            if str(finding.get("flaw_id")) == str(finding_id):  # Match by ID
-                modified_finding = finding.copy()  # Copy all existing fields
-
-                # Update only the fields provided
-                if updated_title is not None:
-                    modified_finding["title"] = updated_title
-                    updated_finding=modified_finding
-                    log_change("finding title", finding_id, finding["title"], updated_title, accepted=True)
-                if updated_description is not None:
-                    modified_finding["description"] = updated_description
-                    updated_finding=modified_finding
-                    log_change("finding description", finding_id, finding["description"], updated_description, accepted=True)
-                if updated_recommendations is not None:
-                    modified_finding["recommendations"] = updated_recommendations
-                    updated_finding=modified_finding
-                    log_change("finding recommendations", finding_id, finding["recommendations"], updated_recommendations, accepted=True)
-                if updated_guidance is not None:
-                    modified_finding["fields"]["guidance"]["value"] = updated_guidance
-                    updated_finding=modified_finding
-                    log_change("finding guidance", finding_id, finding["fields"]["guidance"]["value"], updated_guidance, accepted=True)
-                if updated_reproduction_steps is not None:
-                    modified_finding["fields"]["reproduction_steps"]["value"] = updated_reproduction_steps
-                    updated_finding=modified_finding
-                    log_change("finding reproduction_steps", finding_id, finding["fields"]["reproduction_steps"]["value"], updated_reproduction_steps, accepted=True)
-     
-                is_finding_changed = True
-            else:
-                modified_finding = finding  # Keep other findings unchanged
-
-            modified_findings.append(modified_finding)
-
-        # If the finding was not found, return an error
-        if not is_finding_changed:
+        if target is None:
             print(f"Error: No finding found with ID {finding_id}.")
             time.sleep(3)
             return False
 
-        if not updated_finding:
-            print(f"Error: updated_finding is still None even when is_finding_changed is True.  Stopping as this should not happen")
-            time.sleep(3)
-            return False
+        # ---- snapshot originals (strings only) BEFORE mutation ----
+        def _nested(d, *path, default=""):
+            cur = d
+            for p in path:
+                if not isinstance(cur, dict) or p not in cur:
+                    return default
+                cur = cur[p]
+            return cur
 
-        # Update our local copy
-        self.report_findings_content = modified_findings
-
-        # API Request
-        url = f"{self.base_url}/client/{client_id}/report/{report_id}/flaw/{finding_id}"
-        headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json"
+        originals = {
+            "title": target.get("title", ""),
+            "description": target.get("description", ""),
+            "recommendations": target.get("recommendations", ""),
+            "guidance": _nested(target, "fields", "guidance", "value", default=""),
+            "reproduction_steps": _nested(target, "fields", "reproduction_steps", "value", default=""),
         }
 
+        # ---- build list of accepted updates (only if param is provided AND changed) ----
+        updates = []  # each: (log_label, path_key, new_value, original_value)
+        if updated_title is not None and updated_title != originals["title"]:
+            updates.append(("finding title", ("title",), updated_title, originals["title"]))
+        if updated_description is not None and updated_description != originals["description"]:
+            updates.append(("finding description", ("description",), updated_description, originals["description"]))
+        if updated_recommendations is not None and updated_recommendations != originals["recommendations"]:
+            updates.append(("finding recommendations", ("recommendations",), updated_recommendations, originals["recommendations"]))
+        if updated_guidance is not None and updated_guidance != originals["guidance"]:
+            updates.append(("finding guidance", ("fields", "guidance", "value"), updated_guidance, originals["guidance"]))
+        if updated_reproduction_steps is not None and updated_reproduction_steps != originals["reproduction_steps"]:
+            updates.append(("finding reproduction_steps", ("fields", "reproduction_steps", "value"), updated_reproduction_steps, originals["reproduction_steps"]))
+
+        if not updates:
+            print("No changes to apply for this finding.")
+            time.sleep(2)
+            return False
+
+        # ---- make a deep copy to avoid mutating nested dicts in the original ----
+        modified = deepcopy(target)
+
+        # ---- apply accepted updates to the deep copy ----
+        for _, path, new_val, _orig in updates:
+            if len(path) == 1:
+                modified[path[0]] = new_val
+            else:
+                cur = modified
+                for k in path[:-1]:
+                    if k not in cur or not isinstance(cur[k], dict):
+                        cur[k] = {}
+                    cur = cur[k]
+                cur[path[-1]] = new_val
+
+        # ---- PUT the single finding update ----
+        url = f"{self.base_url}/client/{client_id}/report/{report_id}/flaw/{finding_id}"
+        headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
+
         try:
-            response = self.make_request_authenticated("PUT", url, headers=headers, json=updated_finding)
+            response = self.make_request_authenticated("PUT", url, headers=headers, json=modified)
             if response.status_code == 200:
+                # update in-memory finding (so UI reflects new text)
+                for i, f in enumerate(self.report_findings_content):
+                    if str(f.get("id")) == str(finding_id):
+                        self.report_findings_content[i] = modified
+                        break
+
+                # ---- log ONLY the accepted updates after success ----
+                for log_label, _path, new_val, orig_val in updates:
+                    log_change(log_label, finding_id, orig_val, new_val, accepted=True)
+
                 print(f"Finding {finding_id} updated successfully.")
-                time.sleep(3)
+                time.sleep(2)
                 return True
             else:
                 print(f"Error updating finding {finding_id}: {response.status_code}, {response.text}")
                 time.sleep(3)
                 return False
+
         except requests.RequestException as e:
             print(f"Request failed: {e}")
             time.sleep(3)
             return False
+
 
     # ---------------------------------------------------------------------------------------------
 
@@ -884,8 +942,8 @@ def import_llm_suggestions(api, stdscr, max_x, max_y):
     stdscr.refresh()
     time.sleep(1)
 
-    exec_summary_fields = api.report_content.get("exec_summary", {}).get("custom_fields", [])
-    updated_exec_summary_fields = api.suggestedfixes_from_llm.get("executive_summary_custom_fields", {}).get("custom_fields", [])
+    exec_summary_fields = deepcopy(api.report_content.get("exec_summary", {}).get("custom_fields", []))
+    updated_exec_summary_fields = deepcopy(api.suggestedfixes_from_llm.get("executive_summary_custom_fields", {}).get("custom_fields", []))
 
     for idx, (field, updated_field) in enumerate(zip(exec_summary_fields, updated_exec_summary_fields)):
         field_id = field.get("id")
@@ -921,8 +979,8 @@ def import_llm_suggestions(api, stdscr, max_x, max_y):
     stdscr.refresh()
     time.sleep(1)
 
-    findings = api.report_findings_content
-    updated_findings = api.suggestedfixes_from_llm.get("findings", [])
+    findings = deepcopy(api.report_findings_content)
+    updated_findings = deepcopy(api.suggestedfixes_from_llm.get("findings", []))
 
     fields_to_review = ["title", "description", "recommendations", "guidance", "reproduction_steps"]
 
