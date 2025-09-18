@@ -61,4 +61,4 @@ The below diagrams show the architecture of the tool and its review workflow:
 <img src="docs/architecture.svg" width="900" alt="Architecture">
 
 
-<img src="docs/workflow.svg" width="900" alt="Review workflow">
+<img src="docs/review_workflow.svg" width="900" alt="Review workflow">
