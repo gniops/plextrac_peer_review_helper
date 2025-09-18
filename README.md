@@ -58,7 +58,7 @@ At this point the report is downloaded and presented to the user in the cli menu
 
 The below diagrams show the architecture of the tool and its review workflow:
 
-
+```mermaid
 %%{init: {
   "theme": "dark",
   "themeVariables": {
@@ -132,7 +132,7 @@ flowchart TD
   class LLAMA,GRAM llm;
   class CE,SPACY,HTML nlp;
   class PTAPI,DB pt;
-
+```
 
 
 
@@ -142,7 +142,7 @@ flowchart TD
 This diagram shows the review workflow:
 
 
-
+```mermaid
 %%{init: {
   "theme": "dark",
   "themeVariables": {
@@ -195,5 +195,5 @@ sequenceDiagram
   end
 
   User-->>CLI: Quit
-
+```
 
