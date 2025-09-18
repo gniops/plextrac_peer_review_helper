@@ -58,7 +58,7 @@ At this point the report is downloaded and presented to the user in the cli menu
 
 The below diagrams show the architecture of the tool and its review workflow: 
 
-![Architecture](docs/architecture.svg)
+<img src="docs/architecture.svg" width="900" alt="Architecture">
 
 
-![Review Workflow](docs/review_workflow.svg)
+<img src="docs/workflow.svg" width="900" alt="Review workflow">
