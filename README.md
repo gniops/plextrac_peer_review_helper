@@ -53,3 +53,12 @@ At this point the report is downloaded and presented to the user in the cli menu
 4. repeat for each report findings, including title
 
 5. give summary of changes and let a user reject, edit, or accept changes.  if changes are edited a vi window is opened in the terminal and once the user finishes editing and exits vi the changes are saved in plextrac.  Otherwise they can accept the change as is or reject it.
+
+
+
+The below diagrams show the architecture of the tool and its review workflow:
+
+[!Architecture](docs/architecture.svg)
+
+
+[!Review Workflow](docs/review_workflow.svg)
